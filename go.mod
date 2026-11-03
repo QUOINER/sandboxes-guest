@@ -1,3 +1,3 @@
-module github.com/quoiner/sandboxes-guest
+module github.com/lickren/sandboxes-guest
 
 go 1.27
