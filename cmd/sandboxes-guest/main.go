@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/lickren/sandboxes-guest/internal/version"
+	"github.com/rheic/sandboxes-guest/internal/version"
 )
 
 func main() {
