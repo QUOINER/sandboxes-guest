@@ -1,3 +1,3 @@
-module github.com/KLORQ/sandboxes-guest
+module github.com/quoiner/sandboxes-guest
 
 go 1.27
