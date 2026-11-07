@@ -1,0 +1,70 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing immutable module tag to build and attest
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: local
+      TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+          cache: true
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          tag_commit=$(git rev-parse "refs/tags/$TAG^{commit}")
+          head_commit=$(git rev-parse HEAD)
+          [[ "$tag_commit" == "$head_commit" ]]
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+      - name: Package tagged guest module source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          git archive --format=tar --prefix="sandboxes-guest-${TAG}/" "$TAG" \
+            -o "dist/sandboxes-guest-${TAG}.tar"
+      - name: Install CycloneDX generator
+        run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0
+      - name: Generate SBOM
+        run: cyclonedx-gomod mod -json -licenses -type library -output dist/sandboxes-guest.cdx.json .
+      - name: Checksum source bundle and SBOM
+        run: sha256sum dist/sandboxes-guest-*.tar dist/sandboxes-guest.cdx.json > dist/SHA256SUMS
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+      - uses: actions/attest@v4
+        with:
+          subject-path: dist/sandboxes-guest-*.tar
+          sbom-path: dist/sandboxes-guest.cdx.json
+      - name: Publish release assets without replacing existing files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*
+          else
+            gh release create "$TAG" dist/* --verify-tag --title "$TAG" --generate-notes
+          fi
