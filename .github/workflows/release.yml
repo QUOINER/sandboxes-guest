@@ -27,6 +27,8 @@ jobs:
           ref: ${{ github.ref }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Trust the container checkout for git commands
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Fetch protected main for ancestry validation
         run: git fetch --no-tags origin main:refs/remotes/origin/main
       - name: Verify pinned Go toolchain
@@ -41,13 +43,21 @@ jobs:
           [[ "$tag_commit" == "$head_commit" ]]
           git merge-base --is-ancestor "$tag_commit" origin/main
           echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
-      - name: Package tagged guest module source
+      - name: Build release binaries
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
-          git archive --format=tar --prefix="sandboxes-guest-${TAG}/" "$TAG" \
-            -o "dist/sandboxes-guest-${TAG}.tar"
+          for target in linux/amd64 linux/arm64; do
+            os=${target%/*}
+            arch=${target#*/}
+            out="dist/sandboxes-guest-${os}-${arch}"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath \
+              -ldflags="-s -w -X github.com/rheic/sandboxes-guest/internal/version.Version=$VERSION" -o "$out" ./cmd/sandboxes-guest
+            (cd dist && sha256sum "${out#dist/}") > "$out.sha256"
+          done
+          actual=$(./dist/sandboxes-guest-linux-amd64)
+          [[ "$actual" == "sandboxes-guest $VERSION" ]]
       - name: Install CycloneDX generator
         run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0
       - name: Generate SBOM
@@ -56,10 +66,10 @@ jobs:
         run: (cd dist && sha256sum * > SHA256SUMS)
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
-          subject-path: dist/sandboxes-guest-${{ github.ref_name }}.tar
+          subject-path: dist/sandboxes-guest-linux-amd64,dist/sandboxes-guest-linux-arm64
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: dist/sandboxes-guest-${{ github.ref_name }}.tar
+          subject-path: dist/sandboxes-guest-linux-amd64,dist/sandboxes-guest-linux-arm64
           sbom-path: dist/sandboxes-guest.cdx.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
